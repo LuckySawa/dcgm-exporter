@@ -10,23 +10,25 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
+      - '.github/workflows/build-windows.yml'
   workflow_dispatch:  # 允许手动触发
 
 jobs:
   build-windows:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        go-version: ['1.26']
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Set up Go
+      - name: Set up Go 1.26
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: '1.26.4'
+
+      - name: Verify Go version
+        shell: powershell
+        run: go version
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -38,35 +40,65 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Build dcgm-exporter for Windows
+      - name: Download Go dependencies
         shell: powershell
         run: |
+          go mod download -v
+          go mod verify
+
+      - name: Build dcgm-exporter for Windows (CGO_ENABLED=0)
+        shell: powershell
+        env:
+          CGO_ENABLED: 0
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          Write-Host "Building dcgm-exporter..."
           cd cmd/dcgm-exporter
           go build `
             -v `
             -trimpath `
             -ldflags "-X main.BuildVersion=4.6.0-4.8.3" `
             -o dcgm-exporter.exe
+          if (`$LASTEXITCODE -ne 0) {
+            Write-Error "Build failed with exit code `$LASTEXITCODE"
+            exit 1
+          }
+          Write-Host "Build succeeded"
+          ls -la dcgm-exporter.exe
           cd ..\..
 
-      - name: List artifacts
+      - name: Verify binary
         shell: powershell
-        run: Get-ChildItem -Recurse -Filter "dcgm-exporter.exe"
+        run: |
+          if (Test-Path "cmd/dcgm-exporter/dcgm-exporter.exe") {
+            Write-Host "✓ Binary created successfully"
+            Get-Item "cmd/dcgm-exporter/dcgm-exporter.exe" | Format-List FullName, Length
+          } else {
+            Write-Error "Binary not found!"
+            exit 1
+          }
 
       - name: Upload Windows binary
         uses: actions/upload-artifact@v4
         with:
           name: dcgm-exporter-windows-x86_64
           path: cmd/dcgm-exporter/dcgm-exporter.exe
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Create Release
+      - name: Create Release (on push to main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           files: cmd/dcgm-exporter/dcgm-exporter.exe
           tag_name: windows-build-${{ github.run_number }}
+          name: Windows Build #${{ github.run_number }}
           draft: false
           prerelease: true
+          body: |
+            Automated Windows build of dcgm-exporter
+            Build: ${{ github.run_id }}
+            Commit: ${{ github.sha }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
