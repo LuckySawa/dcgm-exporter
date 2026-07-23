@@ -1,0 +1,72 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'cmd/dcgm-exporter/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        go-version: ['1.26']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\go-build
+            ~\go\pkg\mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Build dcgm-exporter for Windows
+        shell: powershell
+        run: |
+          cd cmd/dcgm-exporter
+          go build `
+            -v `
+            -trimpath `
+            -ldflags "-X main.BuildVersion=4.6.0-4.8.3" `
+            -o dcgm-exporter.exe
+          cd ..\..
+
+      - name: List artifacts
+        shell: powershell
+        run: Get-ChildItem -Recurse -Filter "dcgm-exporter.exe"
+
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: dcgm-exporter-windows-x86_64
+          path: cmd/dcgm-exporter/dcgm-exporter.exe
+          retention-days: 30
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: cmd/dcgm-exporter/dcgm-exporter.exe
+          tag_name: windows-build-${{ github.run_number }}
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
