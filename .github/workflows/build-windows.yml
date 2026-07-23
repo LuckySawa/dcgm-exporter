@@ -1,4 +1,4 @@
-name: Build Windows
+name: Build Windows (Cross-compile from Linux)
 
 on:
   push:
@@ -11,11 +11,11 @@ on:
       - 'go.sum'
       - 'Makefile'
       - '.github/workflows/build-windows.yml'
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,57 +27,50 @@ jobs:
           go-version: '1.26.4'
 
       - name: Verify Go version
-        shell: powershell
         run: go version
 
       - name: Cache Go modules
         uses: actions/cache@v4
         with:
           path: |
-            ~\AppData\Local\go-build
-            ~\go\pkg\mod
+            ~/.cache/go-build
+            ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
       - name: Download Go dependencies
-        shell: powershell
         run: |
           go mod download -v
           go mod verify
 
-      - name: Build dcgm-exporter for Windows (CGO_ENABLED=0)
-        shell: powershell
+      - name: Build dcgm-exporter for Windows (cross-compile)
         env:
           CGO_ENABLED: 0
           GOOS: windows
           GOARCH: amd64
         run: |
-          Write-Host "Building dcgm-exporter..."
           cd cmd/dcgm-exporter
-          go build `
-            -v `
-            -trimpath `
-            -ldflags "-X main.BuildVersion=4.6.0-4.8.3" `
+          go build \
+            -v \
+            -trimpath \
+            -ldflags "-X main.BuildVersion=4.6.0-4.8.3" \
             -o dcgm-exporter.exe
-          if (`$LASTEXITCODE -ne 0) {
-            Write-Error "Build failed with exit code `$LASTEXITCODE"
-            exit 1
-          }
-          Write-Host "Build succeeded"
-          ls -la dcgm-exporter.exe
-          cd ..\..
+          echo "✓ Build succeeded"
+          ls -lh dcgm-exporter.exe
+          file dcgm-exporter.exe
+          cd ../..
 
       - name: Verify binary
-        shell: powershell
         run: |
-          if (Test-Path "cmd/dcgm-exporter/dcgm-exporter.exe") {
-            Write-Host "✓ Binary created successfully"
-            Get-Item "cmd/dcgm-exporter/dcgm-exporter.exe" | Format-List FullName, Length
-          } else {
-            Write-Error "Binary not found!"
+          if [ -f "cmd/dcgm-exporter/dcgm-exporter.exe" ]; then
+            echo "✓ Binary created successfully"
+            ls -lh cmd/dcgm-exporter/dcgm-exporter.exe
+            file cmd/dcgm-exporter/dcgm-exporter.exe
+          else
+            echo "✗ Binary not found!"
             exit 1
-          }
+          fi
 
       - name: Upload Windows binary
         uses: actions/upload-artifact@v4
@@ -97,8 +90,9 @@ jobs:
           draft: false
           prerelease: true
           body: |
-            Automated Windows build of dcgm-exporter
+            Automated Windows build of dcgm-exporter (cross-compiled from Linux)
             Build: ${{ github.run_id }}
             Commit: ${{ github.sha }}
+            Architecture: x86_64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
